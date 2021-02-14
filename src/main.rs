@@ -46,7 +46,9 @@ fn main() {
 struct Tetris {
     current_block: Block,
     blocks: Vec<Block>,
-    input: Input
+    input: Input,
+    tick_interval: i32,
+    lines_block_count: Vec<i32>
 }
 
 impl Tetris {
@@ -57,29 +59,49 @@ impl Tetris {
         {
             current_block,  
             blocks: Vec::new(),
-            input: Input::default()
+            input: Input::default(),
+            tick_interval: 0,
+            lines_block_count: vec![0; (WINDOW_HEIGHT / SQUARE_SIZE) as usize]
         }
     }
 }
 
 impl EventHandler for Tetris {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        const DESIRED_FPS: u32 = 60;
+        self.tick_interval += 1;
+        
+        const DESIRED_FPS: u32 = 120;
 
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let seconds = 1.0 / (DESIRED_FPS as f32);
 
-            let moving = self.current_block.update_speed(seconds);
-            if  moving == false {
-                self.blocks.push(self.current_block);
+            let is_moving = self.current_block.update_speed(seconds + self.input.speed_boost);
+            if is_moving == false || self.current_block.will_collide(&self.blocks) {
+                self.blocks.push(self.current_block.clone());
+                
+                for pos in self.current_block.positions.iter() {
+                    let line = pos.0 + self.current_block.translate.0;
+                    self.lines_block_count[line.floor() as usize] += 1;
+                }
 
                 let block_type: BlockType = rand::random();
                 self.current_block = Block::new(block_type);
+                return Ok(());
             }
         }
+        
+        if self.tick_interval >= 3 {
+            self.tick_interval = 0;
 
-        self.current_block.update_position(self.input.movement);
-
+            if self.input.rotate {
+                self.current_block.rotate();
+            }
+            
+            if self.current_block.can_move_horizontal(&self.blocks, self.input.movement) {
+                self.current_block.update_position(self.input.movement);
+            }
+        }
+            
         Ok(())
     }
 
@@ -96,19 +118,21 @@ impl EventHandler for Tetris {
     }
 
     fn key_down_event(&mut self, ctx: &mut Context, keycode: event::KeyCode, _keymod: ggez_input::keyboard::KeyMods, _repeat: bool) {
-            match keycode {
-                event::KeyCode::Space => self.input.rotate = true,
-                event::KeyCode::Left => self.input.movement = -1.0,
-                event::KeyCode::Right => self.input.movement = 1.0,
-                event::KeyCode::Escape => event::quit(ctx),
-                _ => (), // Do nothing
-            }
+        match keycode {
+            event::KeyCode::Space => self.input.rotate = true,
+            event::KeyCode::Left => self.input.movement = -1.0,
+            event::KeyCode::Right => self.input.movement = 1.0,
+            event::KeyCode::Down => self.input.speed_boost = 0.05,
+            event::KeyCode::Escape => event::quit(ctx),
+            _ => (), // Do nothing
+        }
     }
 
     fn key_up_event(&mut self, _ctx: &mut Context, keycode: event::KeyCode, _keymod: ggez_input::keyboard::KeyMods) {
         match keycode {
             event::KeyCode::Space => self.input.rotate = false,
             event::KeyCode::Left | event::KeyCode::Right => self.input.movement = 0.0,
+            | event::KeyCode::Down => self.input.speed_boost = 0.0,
             _ => (), // Do nothing
         }
     }
