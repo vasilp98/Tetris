@@ -9,6 +9,7 @@ use ggez::GameResult;
 use rand::{
     distributions::{Distribution, Standard},
     Rng,
+    thread_rng
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -38,25 +39,46 @@ impl Distribution<BlockType> for Standard {
 }
 
 pub struct Square {
+    pub row: f32,
+    pub column: f32,
+    color: Color,
     component: Rect
 }
 
 impl Square {
-    fn new() -> Self {
+    fn new(row: f32, column: f32, color: Color) -> Self {
         Square {
-            component: Rect::new(BORDER_SIZE, BORDER_SIZE, SQUARE_SIZE - (BORDER_SIZE * 2.0), SQUARE_SIZE - (BORDER_SIZE * 2.0)
-            )
+            row,
+            column,
+            color,
+            component: Rect::new(BORDER_SIZE, BORDER_SIZE, SQUARE_SIZE - (BORDER_SIZE * 2.0), SQUARE_SIZE - (BORDER_SIZE * 2.0))
         }
+    }
+
+    pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
+        let mut mesh = MeshBuilder::new();
+        mesh.rectangle(DrawMode::fill(), self.component, self.color);
+
+        let mesh = &mesh.build(ctx).unwrap();
+        graphics::draw(ctx, mesh, DrawParam {
+            dest: Point2 {
+                x: self.column * SQUARE_SIZE,
+                y: self.row * SQUARE_SIZE,
+            },
+            .. Default::default()
+        }).unwrap();
+        
+        Ok(())
     }
 }
 
 #[derive(Clone)]
 pub struct Block {
-    block_type: BlockType,
     pub positions: Vec<(f32, f32)>,
-    color: Color,
-    speed: f32,
-    pub translate: (f32, f32)
+    pub translate: (f32, f32),
+    block_type: BlockType,
+    //speed: f32,
+    color: Color
 }
 
 impl Block {
@@ -71,57 +93,65 @@ impl Block {
             BlockType::T => positions = vec!((0.0, 0.0), (0.0, 1.0), (0.0, 2.0), (1.0, 1.0)),
             BlockType::Z => positions = vec!((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 2.0)),
         }
+        
+        let mut rng = thread_rng();
+        let rng_number = rng.gen_range(0.0..255.0);
+        let random_color = Color::new(rng_number, rng_number, rng_number, rng.gen_range(0.0..1.0));
 
         Block {
             block_type,
             positions,
-            color: Color::new(42. / 255., 200. / 255., 255. / 255., 1.0),
-            speed: 0.0,
+            color: random_color,
+            //speed: 0.0,
             translate: (0.0, 0.0)
         }
     }
 
-    pub fn update_speed(&mut self, seconds: f32) -> bool {
-        let speed: f32 = seconds * 2.0;
-
+    pub fn translate(&mut self, x: f32, y: f32) -> bool {
+        let speed: f32 = y * 2.0;
+        
         for pos in self.positions.iter() {
-            if pos.1 + self.translate.1 + speed + 1.0 > WINDOW_HEIGHT / SQUARE_SIZE {
+            if pos.0 + self.translate.0 + x + 1.0 > WINDOW_WIDTH / SQUARE_SIZE ||
+               pos.0 + self.translate.0 + x < 0.0 || 
+               pos.1 + self.translate.1 + speed + 1.0 > WINDOW_HEIGHT / SQUARE_SIZE {
                 return false;
             }
         }
 
+        self.translate.0 += x;
         self.translate.1 += speed;
 
-        return true;
-    }
-
-    pub fn update_position(&mut self, offset: f32) {
-        for pos in self.positions.iter() {
-            if pos.0 + self.translate.0 + offset + 1.0 > WINDOW_WIDTH / SQUARE_SIZE ||
-               pos.0 + self.translate.0 + offset < 0.0 {
-                return;
-            }
-        }
-    
-        self.translate.0 += offset;
+        true
     }
 
     pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         for pos in self.positions.iter() {
             let mut mesh = MeshBuilder::new();
-            mesh.rectangle(DrawMode::fill(), Square::new().component, self.color);
+            mesh.rectangle(DrawMode::fill(), Square::new(0.0, 0.0, self.color).component, self.color);
 
             let mesh = &mesh.build(ctx).unwrap();
             graphics::draw(ctx, mesh, DrawParam {
                 dest: Point2 {
-                    x: ((pos.0 + self.translate.0) * SQUARE_SIZE).floor(),
-                    y: ((pos.1 + self.translate.1) * SQUARE_SIZE).floor(),
+                    x: (pos.0 + self.translate.0) * SQUARE_SIZE,
+                    y: (pos.1 + self.translate.1) * SQUARE_SIZE,
                 },
                 .. Default::default()
             }).unwrap();
         }
 
         Ok(())
+    }
+
+    pub fn to_squares(&mut self) -> Vec<Square> {
+        let mut squares: Vec<Square> = Vec::new();
+        for pos in self.positions.iter() {
+            let row = (pos.1 + self.translate.1).round();
+            let column = (pos.0 + self.translate.0).round();
+
+            squares.push(Square::new(row, column, self.color));
+        }
+
+        squares
     }
 
     pub fn rotate(&mut self) {
@@ -166,33 +196,26 @@ impl Block {
         self.positions = new_positions;
     }
 
-    pub fn will_collide(&mut self, blocks: &Vec<Block>) -> bool {
+    pub fn will_collide(&mut self, squares: &Vec<Square>) -> bool {
         for pos in self.positions.iter() {
-            for block in blocks.iter() {
-                for other_pos in block.positions.iter() {
-                    if (pos.1 + self.translate.1 + 1.0) >= other_pos.1 + block.translate.1 &&
-                       (pos.1 + self.translate.1 + 1.0) <= other_pos.1 + block.translate.1 + 1.0 &&
-                        pos.0 + self.translate.0 == other_pos.0 + block.translate.0 {
-                        return true;
-                    } 
-                }
+            for square in squares.iter() {
+                if (pos.1 + self.translate.1 + 1.0) >= square.row &&
+                   (pos.1 + self.translate.1 + 1.0) <= square.row + 1.0 &&
+                    pos.0 + self.translate.0 == square.column {
+                    return true;
+                } 
             }
         }
 
         return false;
     }
 
-    pub fn can_move_horizontal(&mut self, blocks: &Vec<Block>, movement: f32) -> bool {
+    pub fn can_move_horizontal(&mut self, squares: &Vec<Square>, movement: f32) -> bool {
         for pos in self.positions.iter() {
-            for block in blocks.iter() {
-                for other_pos in block.positions.iter() {
-                    if ((movement > 0.0 && pos.0 + self.translate.0 + movement >= other_pos.0 + block.translate.0) || 
-                       (movement < 0.0 && pos.0 + self.translate.0 + movement <= other_pos.0 + block.translate.0)) &&
-                       (pos.1 + self.translate.1 + 1.0) >= other_pos.1 + block.translate.1 &&
-                       (pos.1 + self.translate.1 + 1.0) <= other_pos.1 + block.translate.1 + 1.0 {
-                        return false;
-                    } 
-                }
+            let square_column = (pos.0 + self.translate.0 + movement).round();
+            let square_row = (pos.1 + self.translate.1).round();
+            if let Some(_) = squares.iter().find(|s| s.column == square_column && s.row == square_row) {
+                return false;
             }
         }
 

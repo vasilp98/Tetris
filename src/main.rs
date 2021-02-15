@@ -46,8 +46,9 @@ fn main() {
 struct Tetris {
     current_block: Block,
     blocks: Vec<Block>,
+    squares: Vec<Square>,
     input: Input,
-    tick_interval: i32,
+    ticks: i32,
     lines_block_count: Vec<i32>
 }
 
@@ -59,29 +60,62 @@ impl Tetris {
         {
             current_block,  
             blocks: Vec::new(),
+            squares: Vec::new(),
             input: Input::default(),
-            tick_interval: 0,
+            ticks: 0,
             lines_block_count: vec![0; (WINDOW_HEIGHT / SQUARE_SIZE) as usize]
         }
     }
+
+    fn clear_line(&mut self, line: usize) {
+        self.squares.retain(|s| s.row != line as f32);
+        self.lines_block_count[line] = 0;
+
+        for square in self.squares.iter_mut() {
+            if square.row < line as f32 {
+                square.row += 1.0;
+            }
+        } 
+
+        for i in (0..line + 1).rev() {
+            if i == 0 {
+                self.lines_block_count[i] = 0;
+            }
+            else {
+                self.lines_block_count[i] = self.lines_block_count[i - 1];
+            }
+        }
+    } 
 }
 
 impl EventHandler for Tetris {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        self.tick_interval += 1;
+        self.ticks += 1;
         
-        const DESIRED_FPS: u32 = 120;
+        const DESIRED_FPS: u32 = 60;
 
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let seconds = 1.0 / (DESIRED_FPS as f32);
 
-            let is_moving = self.current_block.update_speed(seconds + self.input.speed_boost);
-            if is_moving == false || self.current_block.will_collide(&self.blocks) {
+            let is_moving = self.current_block.translate(0.0, seconds + self.input.speed_boost);
+            if is_moving == false || self.current_block.will_collide(&self.squares) {
                 self.blocks.push(self.current_block.clone());
-                
-                for pos in self.current_block.positions.iter() {
-                    let line = pos.0 + self.current_block.translate.0;
-                    self.lines_block_count[line.floor() as usize] += 1;
+
+                let squares = self.current_block.to_squares();
+                for square in squares {
+                    if square.row == 0.0 {
+                        event::quit(ctx);
+                    }
+
+                    self.lines_block_count[square.row as usize] += 1;
+                    self.squares.push(square);
+                }
+
+                for i in 0..self.lines_block_count.len() {
+                    let line_block_count = self.lines_block_count[i];
+                    if line_block_count == 10 {
+                        self.clear_line(i);
+                    }
                 }
 
                 let block_type: BlockType = rand::random();
@@ -89,17 +123,17 @@ impl EventHandler for Tetris {
                 return Ok(());
             }
         }
-        
-        if self.tick_interval >= 3 {
-            self.tick_interval = 0;
 
+        if self.ticks >= ROTATION_INTERVAL {
             if self.input.rotate {
                 self.current_block.rotate();
             }
             
-            if self.current_block.can_move_horizontal(&self.blocks, self.input.movement) {
-                self.current_block.update_position(self.input.movement);
+            if self.ticks > MOVE_INTERVAL && self.current_block.can_move_horizontal(&self.squares, self.input.movement) {
+                self.current_block.translate(self.input.movement, 0.0);
             }
+
+            self.ticks = 0;
         }
             
         Ok(())
@@ -110,8 +144,8 @@ impl EventHandler for Tetris {
 
         self.current_block.draw(ctx).unwrap();
 
-        for block in self.blocks.iter_mut() {
-            block.draw(ctx).unwrap();
+        for square in self.squares.iter_mut() {
+            square.draw(ctx).unwrap();
         }
 
         graphics::present(ctx)
