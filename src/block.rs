@@ -41,12 +41,12 @@ impl Distribution<BlockType> for Standard {
 pub struct Square {
     pub row: f32,
     pub column: f32,
-    color: Color,
-    component: Rect
+    pub color: Color,
+    pub component: Rect
 }
 
 impl Square {
-    fn new(row: f32, column: f32, color: Color) -> Self {
+    pub fn new(row: f32, column: f32, color: Color) -> Self {
         Square {
             row,
             column,
@@ -62,8 +62,8 @@ impl Square {
         let mesh = &mesh.build(ctx).unwrap();
         graphics::draw(ctx, mesh, DrawParam {
             dest: Point2 {
-                x: self.column * SQUARE_SIZE,
-                y: self.row * SQUARE_SIZE,
+                x: self.column * SQUARE_SIZE + ENTRY_POINT.0,
+                y: self.row * SQUARE_SIZE + ENTRY_POINT.1,
             },
             .. Default::default()
         }).unwrap();
@@ -95,8 +95,7 @@ impl Block {
         }
         
         let mut rng = thread_rng();
-        let rng_number = rng.gen_range(0.0..255.0);
-        let random_color = Color::new(rng_number, rng_number, rng_number, rng.gen_range(0.0..1.0));
+        let random_color = Color::new(rng.gen_range(0.5..1.0), rng.gen_range(0.5..1.0), rng.gen_range(0.5..1.0), rng.gen_range(0.5..1.0));
 
         Block {
             block_type,
@@ -107,21 +106,11 @@ impl Block {
         }
     }
 
-    pub fn translate(&mut self, x: f32, y: f32) -> bool {
+    pub fn translate(&mut self, x: f32, y: f32) {
         let speed: f32 = y * 2.0;
-        
-        for pos in self.positions.iter() {
-            if pos.0 + self.translate.0 + x + 1.0 > WINDOW_WIDTH / SQUARE_SIZE ||
-               pos.0 + self.translate.0 + x < 0.0 || 
-               pos.1 + self.translate.1 + speed + 1.0 > WINDOW_HEIGHT / SQUARE_SIZE {
-                return false;
-            }
-        }
 
         self.translate.0 += x;
         self.translate.1 += speed;
-
-        true
     }
 
     pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
@@ -132,8 +121,8 @@ impl Block {
             let mesh = &mesh.build(ctx).unwrap();
             graphics::draw(ctx, mesh, DrawParam {
                 dest: Point2 {
-                    x: (pos.0 + self.translate.0) * SQUARE_SIZE,
-                    y: (pos.1 + self.translate.1) * SQUARE_SIZE,
+                    x: (pos.0 + self.translate.0) * SQUARE_SIZE + ENTRY_POINT.0,
+                    y: (pos.1 + self.translate.1) * SQUARE_SIZE + ENTRY_POINT.1,
                 },
                 .. Default::default()
             }).unwrap();
@@ -167,9 +156,9 @@ impl Block {
 
         let mut move_left: f32 = 0.0;
         for pos in self.positions.iter() {
-            if pos.0 + self.translate.0 + 1.0 > WINDOW_WIDTH / SQUARE_SIZE {
-                if move_left < pos.0 + self.translate.0 + 1.0 - WINDOW_WIDTH / SQUARE_SIZE {
-                    move_left = pos.0 + self.translate.0 + 1.0 - WINDOW_WIDTH / SQUARE_SIZE;
+            if pos.0 + self.translate.0 + 1.0 > BOARD_WIDTH / SQUARE_SIZE {
+                if move_left < pos.0 + self.translate.0 + 1.0 - BOARD_WIDTH / SQUARE_SIZE {
+                    move_left = pos.0 + self.translate.0 + 1.0 - BOARD_WIDTH / SQUARE_SIZE;
                 }
             }
         }
@@ -196,7 +185,7 @@ impl Block {
         self.positions = new_positions;
     }
 
-    pub fn will_collide(&mut self, squares: &Vec<Square>) -> bool {
+    fn should_stop(&mut self, squares: &Vec<Square>) -> bool {
         for pos in self.positions.iter() {
             for square in squares.iter() {
                 if (pos.1 + self.translate.1 + 1.0) >= square.row &&
@@ -205,20 +194,29 @@ impl Block {
                     return true;
                 } 
             }
+
+            if pos.1 + self.translate.1 + 1.0 > BOARD_HEIGHT / SQUARE_SIZE {
+                return true;
+            }
         }
 
         return false;
     }
 
-    pub fn can_move_horizontal(&mut self, squares: &Vec<Square>, movement: f32) -> bool {
+    pub fn will_collide(&mut self, squares: &Vec<Square>, movement: f32) -> bool {
         for pos in self.positions.iter() {
             let square_column = (pos.0 + self.translate.0 + movement).round();
             let square_row = (pos.1 + self.translate.1).round();
             if let Some(_) = squares.iter().find(|s| s.column == square_column && s.row == square_row) {
-                return false;
+                return true;
+            }
+
+            if pos.0 + self.translate.0 + movement + 1.0 > BOARD_WIDTH / SQUARE_SIZE ||
+               pos.0 + self.translate.0 + movement < 0.0 {
+                return true;
             }
         }
 
-        return true;
+        return self.should_stop(squares);
     }
 }

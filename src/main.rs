@@ -8,11 +8,12 @@ use crate::input::*;
 
 use ggez::event;
 use ggez::filesystem;
-use ggez::graphics;
+use ggez::graphics::{self, Rect, Color, MeshBuilder, DrawMode, DrawParam};
 use ggez::input as ggez_input;
 use ggez::timer;
 use ggez::{Context, ContextBuilder, GameResult};
 use ggez::event::{EventHandler};
+use ggez::mint::Point2;
 
 use std::env;
 use std::path;
@@ -45,6 +46,7 @@ fn main() {
 
 struct Tetris {
     current_block: Block,
+    next_block: Block,
     blocks: Vec<Block>,
     squares: Vec<Square>,
     input: Input,
@@ -54,16 +56,15 @@ struct Tetris {
 
 impl Tetris {
     pub fn new(_ctx: &mut Context) -> Tetris {
-        let block_type: BlockType = rand::random();
-        let current_block = Block::new(block_type); 
         Tetris 
         {
-            current_block,  
+            current_block: Block::new(rand::random()), 
+            next_block: Block::new(rand::random()),
             blocks: Vec::new(),
             squares: Vec::new(),
             input: Input::default(),
             ticks: 0,
-            lines_block_count: vec![0; (WINDOW_HEIGHT / SQUARE_SIZE) as usize]
+            lines_block_count: vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize]
         }
     }
 
@@ -86,6 +87,62 @@ impl Tetris {
             }
         }
     } 
+
+    fn translate_current_block(&mut self, x: f32, y: f32) -> bool {
+        if self.current_block.will_collide(&self.squares, x) {
+            return false;
+        }
+
+        self.current_block.translate(x, y);
+        true
+    }
+
+    fn draw_next_block(&mut self, ctx: &mut Context) -> GameResult<()> {
+        for square in self.next_block.to_squares() {
+            let mut mesh = MeshBuilder::new();
+            mesh.rectangle(DrawMode::fill(), square.component, square.color);
+
+            let mesh = &mesh.build(ctx).unwrap();
+            graphics::draw(ctx, mesh, DrawParam {
+                dest: Point2 {
+                    x: (((BOARD_WIDTH + 2.0 * SQUARE_SIZE) / SQUARE_SIZE) + 1.0 + square.column) * SQUARE_SIZE,
+                    y: (2.0 + square.row) * SQUARE_SIZE,
+                },
+                .. Default::default()
+            }).unwrap();
+        }
+
+        Ok(())
+    }
+
+    fn draw_borders(&mut self, ctx: &mut Context) -> GameResult<()> {
+        let color = Color::new(1.0, 1.0, 1.0, 1.0);
+        let top = Rect::new(0.0, 0.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, ENTRY_POINT.1);
+        let left = Rect::new(0.0, 0.0, ENTRY_POINT.0, 2.0 * SQUARE_SIZE + BOARD_HEIGHT);
+        let bottom = Rect::new(0.0, BOARD_HEIGHT + ENTRY_POINT.1, 2.0 * SQUARE_SIZE + BOARD_WIDTH, ENTRY_POINT.1);
+        let right = Rect::new(BOARD_WIDTH + ENTRY_POINT.0, 0.0, ENTRY_POINT.0, 2.0 * SQUARE_SIZE + BOARD_HEIGHT);
+
+        self.draw_border(ctx, top, color).unwrap();
+        self.draw_border(ctx, bottom, color).unwrap();
+        self.draw_border(ctx, left, color).unwrap();
+        self.draw_border(ctx, right, color)
+    }
+    
+    fn draw_border(&mut self, ctx: &mut Context, border: Rect, color: Color) -> GameResult<()> {
+        let mut mesh = MeshBuilder::new();
+        mesh.rectangle(DrawMode::fill(), border, color);
+
+        let mesh = &mesh.build(ctx).unwrap();
+        graphics::draw(ctx, mesh, DrawParam {
+            dest: Point2 {
+                x: 0.0,
+                y: 0.0,
+            },
+            .. Default::default()
+        }).unwrap();
+
+        Ok(())
+    }
 }
 
 impl EventHandler for Tetris {
@@ -97,8 +154,7 @@ impl EventHandler for Tetris {
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let seconds = 1.0 / (DESIRED_FPS as f32);
 
-            let is_moving = self.current_block.translate(0.0, seconds + self.input.speed_boost);
-            if is_moving == false || self.current_block.will_collide(&self.squares) {
+            if !self.translate_current_block(0.0, seconds + self.input.speed_boost) {
                 self.blocks.push(self.current_block.clone());
 
                 let squares = self.current_block.to_squares();
@@ -107,7 +163,7 @@ impl EventHandler for Tetris {
                         event::quit(ctx);
                     }
 
-                    self.lines_block_count[square.row as usize] += 1;
+                    self.lines_block_count[square.row  as usize] += 1;
                     self.squares.push(square);
                 }
 
@@ -118,19 +174,24 @@ impl EventHandler for Tetris {
                     }
                 }
 
-                let block_type: BlockType = rand::random();
-                self.current_block = Block::new(block_type);
+                self.current_block = self.next_block.clone();
+                self.next_block = Block::new(rand::random());
                 return Ok(());
             }
         }
 
         if self.ticks >= ROTATION_INTERVAL {
             if self.input.rotate {
+                let old_positions = self.current_block.positions.clone();
+                
                 self.current_block.rotate();
+                if self.current_block.will_collide(&self.squares, 0.0) {
+                    self.current_block.positions = old_positions;
+                }
             }
             
-            if self.ticks > MOVE_INTERVAL && self.current_block.can_move_horizontal(&self.squares, self.input.movement) {
-                self.current_block.translate(self.input.movement, 0.0);
+            if self.ticks > MOVE_INTERVAL {
+                self.translate_current_block(self.input.movement, 0.0);
             }
 
             self.ticks = 0;
@@ -147,6 +208,10 @@ impl EventHandler for Tetris {
         for square in self.squares.iter_mut() {
             square.draw(ctx).unwrap();
         }
+
+        self.draw_next_block(ctx).unwrap();
+
+        self.draw_borders(ctx).unwrap();
 
         graphics::present(ctx)
     }
