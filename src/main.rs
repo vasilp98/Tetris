@@ -8,7 +8,7 @@ use crate::input::*;
 
 use ggez::event;
 use ggez::filesystem;
-use ggez::graphics::{self, Rect, Color, MeshBuilder, DrawMode, DrawParam};
+use ggez::graphics::{self, TextFragment, Scale, Font, Text, Rect, Color, MeshBuilder, DrawMode, DrawParam};
 use ggez::input as ggez_input;
 use ggez::timer;
 use ggez::{Context, ContextBuilder, GameResult};
@@ -47,11 +47,14 @@ fn main() {
 struct Tetris {
     current_block: Block,
     next_block: Block,
-    blocks: Vec<Block>,
     squares: Vec<Square>,
     input: Input,
-    ticks: i32,
-    lines_block_count: Vec<i32>
+    lines_block_count: Vec<i32>,
+    lines: i32,
+    score: i32,
+    speed: f32,
+    level: i32,
+    ticks: i32
 }
 
 impl Tetris {
@@ -60,15 +63,20 @@ impl Tetris {
         {
             current_block: Block::new(rand::random()), 
             next_block: Block::new(rand::random()),
-            blocks: Vec::new(),
             squares: Vec::new(),
             input: Input::default(),
-            ticks: 0,
-            lines_block_count: vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize]
+            lines_block_count: vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize],
+            lines: 0,
+            score: 0,
+            speed: DEFAULT_SPEED,
+            level: 0,
+            ticks: 0
         }
     }
 
     fn clear_line(&mut self, line: usize) {
+        self.lines += 1;
+
         self.squares.retain(|s| s.row != line as f32);
         self.lines_block_count[line] = 0;
 
@@ -116,8 +124,8 @@ impl Tetris {
     }
 
     fn draw_borders(&mut self, ctx: &mut Context) -> GameResult<()> {
-        let color = Color::new(1.0, 1.0, 1.0, 1.0);
-        let top = Rect::new(0.0, 0.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, ENTRY_POINT.1);
+        let color = graphics::WHITE;
+        let top = Rect::new(0.0, 0.0, WINDOW_WIDTH, ENTRY_POINT.1);
         let left = Rect::new(0.0, 0.0, ENTRY_POINT.0, 2.0 * SQUARE_SIZE + BOARD_HEIGHT);
         let bottom = Rect::new(0.0, BOARD_HEIGHT + ENTRY_POINT.1, 2.0 * SQUARE_SIZE + BOARD_WIDTH, ENTRY_POINT.1);
         let right = Rect::new(BOARD_WIDTH + ENTRY_POINT.0, 0.0, ENTRY_POINT.0, 2.0 * SQUARE_SIZE + BOARD_HEIGHT);
@@ -143,6 +151,31 @@ impl Tetris {
 
         Ok(())
     }
+
+    fn update_score(&mut self, lines_count: i32) {
+        match lines_count {
+            1 => self.score += SINGLE_LINE_POINTS,
+            2 => self.score += DOUBLE_LINE_POINTS,
+            3 => self.score += TRIPLE_LINE_POINTS,
+            4 => self.score += TETRIS_POINTS,
+            _ => () //Do nothing
+        }
+    }
+
+    fn draw_text(&mut self, ctx: &mut Context, text: String, dest: Point2<f32>) -> GameResult<()> {
+        let mut text_fragment = TextFragment::new(text);
+        text_fragment.color = Some(graphics::WHITE);
+        text_fragment.scale = Some(Scale { x: 20.0, y: 24.0 });
+        text_fragment.font = Some(Font::new(ctx, "/tetris_block.ttf")?);
+        let text = Text::new(text_fragment);
+
+        graphics::draw(ctx, &text, DrawParam {
+            dest,
+            .. Default::default()
+        }).unwrap();
+
+        Ok(())
+    }    
 }
 
 impl EventHandler for Tetris {
@@ -154,9 +187,8 @@ impl EventHandler for Tetris {
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let seconds = 1.0 / (DESIRED_FPS as f32);
 
-            if !self.translate_current_block(0.0, seconds + self.input.speed_boost) {
-                self.blocks.push(self.current_block.clone());
-
+            let speed = seconds + self.input.speed_boost + self.speed;
+            if !self.translate_current_block(0.0, speed) {
                 let squares = self.current_block.to_squares();
                 for square in squares {
                     if square.row == 0.0 {
@@ -167,11 +199,20 @@ impl EventHandler for Tetris {
                     self.squares.push(square);
                 }
 
+                let mut lines_count = 0;
                 for i in 0..self.lines_block_count.len() {
                     let line_block_count = self.lines_block_count[i];
                     if line_block_count == 10 {
+                        lines_count += 1;
                         self.clear_line(i);
                     }
+                }
+
+                self.update_score(lines_count);
+
+                if self.lines > LINES_TO_LEVEL_UP {
+                    self.speed = DEFAULT_SPEED * self.level as f32;
+                    self.lines = 0;
                 }
 
                 self.current_block = self.next_block.clone();
@@ -203,15 +244,15 @@ impl EventHandler for Tetris {
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, graphics::BLACK);
 
-        self.current_block.draw(ctx).unwrap();
-
         for square in self.squares.iter_mut() {
             square.draw(ctx).unwrap();
         }
 
+        self.current_block.draw(ctx).unwrap();
         self.draw_next_block(ctx).unwrap();
-
         self.draw_borders(ctx).unwrap();
+        self.draw_text(ctx, format!("score: {}", self.score.to_string()), Point2 { x: 12.5 * SQUARE_SIZE, y: 6.0 * SQUARE_SIZE }).unwrap();
+        self.draw_text(ctx, format!("level: {}", self.level.to_string()), Point2 { x: 12.5 * SQUARE_SIZE, y: 8.0 * SQUARE_SIZE }).unwrap();
 
         graphics::present(ctx)
     }
@@ -221,7 +262,7 @@ impl EventHandler for Tetris {
             event::KeyCode::Space => self.input.rotate = true,
             event::KeyCode::Left => self.input.movement = -1.0,
             event::KeyCode::Right => self.input.movement = 1.0,
-            event::KeyCode::Down => self.input.speed_boost = 0.05,
+            event::KeyCode::Down => self.input.speed_boost = self.speed * 10.0,
             event::KeyCode::Escape => event::quit(ctx),
             _ => (), // Do nothing
         }
