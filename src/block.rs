@@ -20,12 +20,14 @@ pub enum BlockType {
     O,
     S,
     T,
-    Z
+    Z,
+    Plus,
+    BigZ
 }
 
 impl Distribution<BlockType> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> BlockType {
-        match rng.gen_range(0..=6) {
+        match rng.gen_range(0..=8) {
             0 => BlockType::I,
             1 => BlockType::J,
             2 => BlockType::L,
@@ -33,6 +35,8 @@ impl Distribution<BlockType> for Standard {
             4 => BlockType::S,
             5 => BlockType::T,
             6 => BlockType::Z,
+            7 => BlockType::Plus,
+            8 => BlockType::BigZ,
             _ => BlockType::I
         }
     }
@@ -77,7 +81,6 @@ pub struct Block {
     pub positions: Vec<(f32, f32)>,
     pub translate: (f32, f32),
     block_type: BlockType,
-    //speed: f32,
     color: Color
 }
 
@@ -92,6 +95,8 @@ impl Block {
             BlockType::S => positions = vec!((0.0, 1.0), (0.0, 2.0), (1.0, 0.0), (1.0, 1.0)),
             BlockType::T => positions = vec!((0.0, 0.0), (0.0, 1.0), (0.0, 2.0), (1.0, 1.0)),
             BlockType::Z => positions = vec!((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 2.0)),
+            BlockType::Plus => positions = vec!((0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (1.0, 2.0), (2.0, 1.0)),
+            BlockType::BigZ => positions = vec!((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0), (2.0, 2.0))
         }
         
         let mut rng = thread_rng();
@@ -107,27 +112,28 @@ impl Block {
     }
 
     pub fn translate(&mut self, x: f32, y: f32) {
-        let speed: f32 = y * 2.0;
-
         self.translate.0 += x;
-        self.translate.1 += speed;
+        self.translate.1 += y;
     }
 
-    pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
+    pub fn draw(&mut self, ctx: &mut Context, viewing_area_row: i32) -> GameResult<()> {
         for pos in self.positions.iter() {
-            let mut mesh = MeshBuilder::new();
-            mesh.rectangle(DrawMode::fill(), Square::new(0.0, 0.0, self.color).component, self.color);
-
-            let mesh = &mesh.build(ctx).unwrap();
-            graphics::draw(ctx, mesh, DrawParam {
-                dest: Point2 {
-                    x: (pos.0 + self.translate.0) * SQUARE_SIZE + ENTRY_POINT.0,
-                    y: (pos.1 + self.translate.1) * SQUARE_SIZE + ENTRY_POINT.1,
-                },
-                .. Default::default()
-            }).unwrap();
+            let row = (pos.1 + self.translate.1).round();
+            if row < (viewing_area_row + VIEWING_AREA_ROWS_COUNT) as f32 && row >= viewing_area_row as f32 {
+                let mut mesh = MeshBuilder::new();
+                mesh.rectangle(DrawMode::fill(), Square::new(0.0, 0.0, self.color).component, self.color);
+                
+                let mesh = &mesh.build(ctx).unwrap();
+                graphics::draw(ctx, mesh, DrawParam {
+                    dest: Point2 {
+                        x: (pos.0 + self.translate.0) * SQUARE_SIZE + ENTRY_POINT.0,
+                        y: (pos.1 + self.translate.1) * SQUARE_SIZE + ENTRY_POINT.1,
+                    },
+                    .. Default::default()
+                }).unwrap();
+            }
         }
-
+        
         Ok(())
     }
 
@@ -145,7 +151,7 @@ impl Block {
 
     pub fn rotate(&mut self) {
         match self.block_type {
-            BlockType::J | BlockType::L | BlockType::S | BlockType::T | BlockType::Z => self.rotate_easy_blocks(),
+            BlockType::J | BlockType::L | BlockType::S | BlockType::T | BlockType::Z | BlockType::BigZ => self.rotate_easy_blocks(),
             BlockType::I => {
                 for pos in self.positions.iter_mut() {
                     mem::swap(&mut pos.0, &mut pos.1);

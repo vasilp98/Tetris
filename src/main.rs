@@ -1,12 +1,17 @@
 mod block;
 mod input;
 mod constants;
+mod assets;
+mod bomb;
 
 use crate::constants::*;
 use crate::block::*;
 use crate::input::*;
+use crate::assets::*;
+use crate::bomb::*;
 
 use ggez::event;
+use ggez::audio::{SoundSource};
 use ggez::filesystem;
 use ggez::graphics::{self, TextFragment, Scale, Font, Text, Rect, Color, MeshBuilder, DrawMode, DrawParam};
 use ggez::input as ggez_input;
@@ -14,7 +19,7 @@ use ggez::timer;
 use ggez::{Context, ContextBuilder, GameResult};
 use ggez::event::{EventHandler};
 use ggez::mint::Point2;
-
+use rand::{ Rng, thread_rng };
 use std::env;
 use std::path;
 
@@ -49,6 +54,9 @@ struct Tetris {
     next_block: Block,
     squares: Vec<Square>,
     input: Input,
+    viewing_area_start_row: i32,
+    bomb: Option<Bomb>,
+    game_over: bool,
     lines_block_count: Vec<i32>,
     lines: i32,
     score: i32,
@@ -58,18 +66,25 @@ struct Tetris {
 }
 
 impl Tetris {
-    pub fn new(_ctx: &mut Context) -> Tetris {
-        Tetris 
+    pub fn new(ctx: &mut Context) -> Tetris {
+        let mut assets = Assets::new(ctx).unwrap();
+        assets.theme_song.set_repeat(true);
+        let _ = assets.theme_song.play_detached();
+
+        Tetris
         {
             current_block: Block::new(rand::random()), 
             next_block: Block::new(rand::random()),
             squares: Vec::new(),
             input: Input::default(),
+            viewing_area_start_row: 0,
+            bomb: None,
+            game_over: false,
             lines_block_count: vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize],
             lines: 0,
             score: 0,
             speed: DEFAULT_SPEED,
-            level: 0,
+            level: 1,
             ticks: 0
         }
     }
@@ -113,7 +128,7 @@ impl Tetris {
             let mesh = &mesh.build(ctx).unwrap();
             graphics::draw(ctx, mesh, DrawParam {
                 dest: Point2 {
-                    x: (((BOARD_WIDTH + 2.0 * SQUARE_SIZE) / SQUARE_SIZE) + 1.0 + square.column) * SQUARE_SIZE,
+                    x: (((BOARD_WIDTH + 2.0 * SQUARE_SIZE) / SQUARE_SIZE) + 2.0 + square.column) * SQUARE_SIZE,
                     y: (2.0 + square.row) * SQUARE_SIZE,
                 },
                 .. Default::default()
@@ -175,11 +190,53 @@ impl Tetris {
         }).unwrap();
 
         Ok(())
-    }    
+    }   
+    
+    fn update_bomb(&mut self, speed: f32) {
+        let bomb = self.bomb.as_mut().unwrap();
+        bomb.translate(0.0, speed);
+
+        if bomb.will_collide(&self.squares, 0.0, speed) {
+            self.explode_bomb();
+
+            self.current_block = self.next_block.clone();
+            self.next_block = Block::new(rand::random());
+        }
+    }
+
+    fn explode_bomb(&mut self) {
+        let bomb = self.bomb.as_mut().unwrap();
+        bomb.explode();
+
+        let row = (bomb.pos.y / SQUARE_SIZE).round() - 1.0;
+        let column = (bomb.pos.x / SQUARE_SIZE).round() - 1.0;
+        
+        self.squares.retain(|s| row - 1.0 > s.row || s.row > row + 1.0 || column - 1.0 > s.column || s.column > column + 1.0);
+
+        self.lines_block_count = vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize];
+        for square in self.squares.iter() {
+            self.lines_block_count[square.row  as usize] += 1;
+        }
+        
+        self.bomb = None;
+    }
+
+    fn update_viewing_area(&mut self) {
+        if (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT + self.input.viewing_area_movement) as f32 > BOARD_HEIGHT / SQUARE_SIZE ||
+            self.viewing_area_start_row + self.input.viewing_area_movement < 0 {
+                return;
+        }  
+
+        self.viewing_area_start_row += self.input.viewing_area_movement;
+    }
 }
 
 impl EventHandler for Tetris {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
+        if self.game_over {
+            return Ok(());
+        }
+
         self.ticks += 1;
         
         const DESIRED_FPS: u32 = 60;
@@ -187,12 +244,14 @@ impl EventHandler for Tetris {
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let seconds = 1.0 / (DESIRED_FPS as f32);
 
-            let speed = seconds + self.input.speed_boost + self.speed;
-            if !self.translate_current_block(0.0, speed) {
-                let squares = self.current_block.to_squares();
-                for square in squares {
+            let speed = (seconds + self.input.speed_boost + self.speed) * 2.0;
+            if let Some(_) = self.bomb {
+                self.update_bomb(speed);
+            }
+            else if !self.translate_current_block(0.0, speed) {
+                for square in self.current_block.to_squares() {
                     if square.row == 0.0 {
-                        event::quit(ctx);
+                        self.game_over = true;
                     }
 
                     self.lines_block_count[square.row  as usize] += 1;
@@ -211,12 +270,19 @@ impl EventHandler for Tetris {
                 self.update_score(lines_count);
 
                 if self.lines > LINES_TO_LEVEL_UP {
-                    self.speed = DEFAULT_SPEED * self.level as f32;
+                    self.level += 1;
                     self.lines = 0;
+                    self.speed = DEFAULT_SPEED * self.level as f32;
                 }
 
-                self.current_block = self.next_block.clone();
-                self.next_block = Block::new(rand::random());
+                let mut rng = thread_rng();
+                if rng.gen_range(0..4) == 1 {
+                    self.bomb = Some(Bomb::new(ctx).unwrap());
+                }
+                else {
+                    self.current_block = self.next_block.clone();
+                    self.next_block = Block::new(rand::random());
+                }
                 return Ok(());
             }
         }
@@ -230,9 +296,17 @@ impl EventHandler for Tetris {
                     self.current_block.positions = old_positions;
                 }
             }
-            
+
+            self.update_viewing_area();
+
             if self.ticks > MOVE_INTERVAL {
                 self.translate_current_block(self.input.movement, 0.0);
+                
+                if let Some(bomb) = &mut self.bomb {
+                    if !bomb.will_collide(&self.squares, self.input.movement * SQUARE_SIZE, 0.0) {
+                        bomb.translate(self.input.movement * SQUARE_SIZE, 0.0);
+                    }
+                }
             }
 
             self.ticks = 0;
@@ -244,11 +318,42 @@ impl EventHandler for Tetris {
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, graphics::BLACK);
 
-        for square in self.squares.iter_mut() {
-            square.draw(ctx).unwrap();
+        if self.game_over {
+            self.draw_text(ctx, format!("GAME OVER! SCORE: {}", self.score), Point2 {
+                x: (WINDOW_WIDTH - 400.0) / 2.0,
+                y: (WINDOW_HEIGHT - 50.0) / 2.0,
+            })?;
+
+            graphics::present(ctx)?;
+            return Ok(())
         }
 
-        self.current_block.draw(ctx).unwrap();
+        for square in self.squares.iter_mut() {
+            if square.row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && square.row >= self.viewing_area_start_row as f32 {
+                square.draw(ctx).unwrap();
+            } 
+        }
+
+        // The borders of the viewing area
+        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + self.viewing_area_start_row as f32 * SQUARE_SIZE - 5.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 * SQUARE_SIZE, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+
+        if let Some(bomb) = &mut self.bomb {
+            let row = (bomb.pos.y / SQUARE_SIZE).round() - 1.0;
+            if row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && row > self.viewing_area_start_row as f32 {
+                bomb.draw(ctx).unwrap();
+            }
+        }
+        else {
+            self.current_block.draw(ctx, self.viewing_area_start_row).unwrap();
+
+            // for square in self.current_block.to_squares().iter_mut() {
+            //     if square.row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && square.row >= self.viewing_area_start_row as f32 {
+            //         square.draw(ctx).unwrap();
+            //     } 
+            // }
+        }
+
         self.draw_next_block(ctx).unwrap();
         self.draw_borders(ctx).unwrap();
         self.draw_text(ctx, format!("score: {}", self.score.to_string()), Point2 { x: 12.5 * SQUARE_SIZE, y: 6.0 * SQUARE_SIZE }).unwrap();
@@ -262,7 +367,9 @@ impl EventHandler for Tetris {
             event::KeyCode::Space => self.input.rotate = true,
             event::KeyCode::Left => self.input.movement = -1.0,
             event::KeyCode::Right => self.input.movement = 1.0,
-            event::KeyCode::Down => self.input.speed_boost = self.speed * 10.0,
+            event::KeyCode::W => self.input.viewing_area_movement = -1,
+            event::KeyCode::S => self.input.viewing_area_movement = 1,
+            event::KeyCode::Down => self.input.speed_boost = 0.1,
             event::KeyCode::Escape => event::quit(ctx),
             _ => (), // Do nothing
         }
@@ -272,6 +379,7 @@ impl EventHandler for Tetris {
         match keycode {
             event::KeyCode::Space => self.input.rotate = false,
             event::KeyCode::Left | event::KeyCode::Right => self.input.movement = 0.0,
+            event::KeyCode::W | event::KeyCode::S => self.input.viewing_area_movement = 0,
             | event::KeyCode::Down => self.input.speed_boost = 0.0,
             _ => (), // Do nothing
         }
