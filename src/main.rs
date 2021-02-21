@@ -26,11 +26,6 @@ use std::env;
 use std::path;
 
 fn main() {
-    include_bytes!("..\\resources\\bomb.ogg");
-    include_bytes!("..\\resources\\bomb.png");
-    include_bytes!("..\\resources\\tetris_block.ttf");
-    include_bytes!("..\\resources\\tetris_theme_song.mp3");
-
     let (mut ctx, mut event_loop) = ContextBuilder::new("Tetris", "Vasil")
         .window_setup(ggez::conf::WindowSetup::default().title("Tetris"))
         .window_mode(
@@ -46,10 +41,10 @@ fn main() {
         filesystem::mount(&mut ctx, &path, true);
     }
 
-    let mut my_game = Tetris::new(&mut ctx);
+    let mut tetris_game = Tetris::new(&mut ctx);
 
     // Run!
-    match event::run(&mut ctx, &mut event_loop, &mut my_game) {
+    match event::run(&mut ctx, &mut event_loop, &mut tetris_game) {
         Ok(_) => println!("Exited cleanly."),
         Err(e) => println!("Error occured: {}", e)
     }
@@ -74,7 +69,7 @@ struct Tetris {
 
 impl Tetris {
     const ROTATION_INTERVAL: i32 = 5;
-    const MOVE_INTERVAL: i32 = 1;
+    const MOVE_INTERVAL: i32 = 5;
 
     pub fn new(ctx: &mut Context) -> Tetris {
         let mut assets = Assets::new(ctx).unwrap();
@@ -182,7 +177,7 @@ impl Tetris {
 
     fn update_score(&mut self, lines_count: i32) {
         let mut multiplier = 1.0;
-        if self.configuration.classic_mode() {
+        if !self.configuration.classic_mode() {
             multiplier = 2.0 + (BOARD_HEIGHT / SQUARE_SIZE - self.configuration.viewing_area_rows_count() as f32) / 10.0;
         }
         match lines_count {
@@ -232,7 +227,7 @@ impl Tetris {
 
         self.lines_block_count = vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize];
         for square in self.squares.iter() {
-            self.lines_block_count[square.row  as usize] += 1;
+            self.lines_block_count[square.row as usize] += 1;
         }
         
         self.bomb = None;
@@ -241,7 +236,8 @@ impl Tetris {
     fn update_viewing_area(&mut self) {
         if (self.viewing_area_start_row + self.configuration.viewing_area_rows_count() + self.input.viewing_area_movement) as f32 > BOARD_HEIGHT / SQUARE_SIZE ||
             self.viewing_area_start_row + self.input.viewing_area_movement < 0 {
-                return;
+            
+            return;
         }  
 
         self.viewing_area_start_row += self.input.viewing_area_movement;
@@ -271,7 +267,7 @@ impl EventHandler for Tetris {
                         self.game_over = true;
                     }
 
-                    self.lines_block_count[square.row  as usize] += 1;
+                    self.lines_block_count[square.row as usize] += 1;
                     self.squares.push(square);
                 }
 
@@ -286,7 +282,7 @@ impl EventHandler for Tetris {
 
                 self.update_score(lines_count);
 
-                if self.lines > self.configuration.lines_to_level_up() {
+                if self.lines >= self.configuration.lines_to_level_up() {
                     self.level += 1;
                     self.lines = 0;
                     self.speed = self.configuration.default_speed() * self.level as f32;
@@ -304,7 +300,8 @@ impl EventHandler for Tetris {
             }
         }
 
-        if self.ticks >= Tetris::ROTATION_INTERVAL {
+        let current_ticks = self.ticks;
+        if current_ticks >= Tetris::ROTATION_INTERVAL {
             if self.input.rotate {
                 let old_positions = self.current_block.positions.clone();
                 
@@ -316,13 +313,15 @@ impl EventHandler for Tetris {
 
             self.update_viewing_area();
 
-            if self.ticks > Tetris::MOVE_INTERVAL {
-                self.translate_current_block(self.input.movement, 0.0);
-                
-                if let Some(bomb) = &mut self.bomb {
-                    if !bomb.will_collide(&self.squares, self.input.movement * SQUARE_SIZE, 0.0) {
-                        bomb.translate(self.input.movement * SQUARE_SIZE, 0.0);
-                    }
+            self.ticks = 0;
+        }
+
+        if current_ticks >= Tetris::MOVE_INTERVAL {
+            self.translate_current_block(self.input.movement, 0.0);
+            
+            if let Some(bomb) = &mut self.bomb {
+                if !bomb.will_collide(&self.squares, self.input.movement * SQUARE_SIZE, 0.0) {
+                    bomb.translate(self.input.movement * SQUARE_SIZE, 0.0);
                 }
             }
 
@@ -353,9 +352,11 @@ impl EventHandler for Tetris {
             } 
         }
 
-        // The borders of the viewing area
-        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + self.viewing_area_start_row as f32 * SQUARE_SIZE - 5.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
-        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 * SQUARE_SIZE, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+        if !self.configuration.classic_mode() {
+            // The borders of the viewing area
+            self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + self.viewing_area_start_row as f32 * SQUARE_SIZE - 5.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+            self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 * SQUARE_SIZE, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+        }
 
         if let Some(bomb) = &mut self.bomb {
             let row = (bomb.pos.y / SQUARE_SIZE).round() - 1.0;
