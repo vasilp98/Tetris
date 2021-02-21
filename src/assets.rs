@@ -7,7 +7,7 @@ pub struct Assets {
 
 impl Assets {
     pub fn new(ctx: &mut Context) -> GameResult<Assets> {
-        let theme_song = audio::Source::new(ctx, "/ThemeTetris.mp3")?;
+        let theme_song = audio::Source::new(ctx, "/tetris_theme_song.mp3")?;
 
         Ok(Assets {
             theme_song

@@ -3,12 +3,14 @@ mod input;
 mod constants;
 mod assets;
 mod bomb;
+mod configuration;
 
 use crate::constants::*;
 use crate::block::*;
 use crate::input::*;
 use crate::assets::*;
 use crate::bomb::*;
+use crate::configuration::*;
 
 use ggez::event;
 use ggez::audio::{SoundSource};
@@ -24,6 +26,11 @@ use std::env;
 use std::path;
 
 fn main() {
+    include_bytes!("..\\resources\\bomb.ogg");
+    include_bytes!("..\\resources\\bomb.png");
+    include_bytes!("..\\resources\\tetris_block.ttf");
+    include_bytes!("..\\resources\\tetris_theme_song.mp3");
+
     let (mut ctx, mut event_loop) = ContextBuilder::new("Tetris", "Vasil")
         .window_setup(ggez::conf::WindowSetup::default().title("Tetris"))
         .window_mode(
@@ -32,7 +39,6 @@ fn main() {
        )
        .build()
        .unwrap();
-
 
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let mut path = path::PathBuf::from(manifest_dir);
@@ -57,6 +63,7 @@ struct Tetris {
     viewing_area_start_row: i32,
     bomb: Option<Bomb>,
     game_over: bool,
+    configuration: Configuration,
     lines_block_count: Vec<i32>,
     lines: i32,
     score: i32,
@@ -66,24 +73,30 @@ struct Tetris {
 }
 
 impl Tetris {
+    const ROTATION_INTERVAL: i32 = 5;
+    const MOVE_INTERVAL: i32 = 1;
+
     pub fn new(ctx: &mut Context) -> Tetris {
         let mut assets = Assets::new(ctx).unwrap();
         assets.theme_song.set_repeat(true);
         let _ = assets.theme_song.play_detached();
 
+        let configuration = Configuration::new();
+
         Tetris
         {
-            current_block: Block::new(rand::random()), 
-            next_block: Block::new(rand::random()),
+            current_block: Block::new(rand::random(), configuration.clone()), 
+            next_block: Block::new(rand::random(), configuration.clone()),
             squares: Vec::new(),
             input: Input::default(),
             viewing_area_start_row: 0,
             bomb: None,
             game_over: false,
+            configuration: configuration.clone(),
             lines_block_count: vec![0; (BOARD_HEIGHT / SQUARE_SIZE) as usize],
             lines: 0,
             score: 0,
-            speed: DEFAULT_SPEED,
+            speed: configuration.default_speed(),
             level: 1,
             ticks: 0
         }
@@ -120,7 +133,7 @@ impl Tetris {
         true
     }
 
-    fn draw_next_block(&mut self, ctx: &mut Context) -> GameResult<()> {
+    fn draw_next_block(&self, ctx: &mut Context) -> GameResult<()> {
         for square in self.next_block.to_squares() {
             let mut mesh = MeshBuilder::new();
             mesh.rectangle(DrawMode::fill(), square.component, square.color);
@@ -138,7 +151,7 @@ impl Tetris {
         Ok(())
     }
 
-    fn draw_borders(&mut self, ctx: &mut Context) -> GameResult<()> {
+    fn draw_borders(&self, ctx: &mut Context) -> GameResult<()> {
         let color = graphics::WHITE;
         let top = Rect::new(0.0, 0.0, WINDOW_WIDTH, ENTRY_POINT.1);
         let left = Rect::new(0.0, 0.0, ENTRY_POINT.0, 2.0 * SQUARE_SIZE + BOARD_HEIGHT);
@@ -151,7 +164,7 @@ impl Tetris {
         self.draw_border(ctx, right, color)
     }
     
-    fn draw_border(&mut self, ctx: &mut Context, border: Rect, color: Color) -> GameResult<()> {
+    fn draw_border(&self, ctx: &mut Context, border: Rect, color: Color) -> GameResult<()> {
         let mut mesh = MeshBuilder::new();
         mesh.rectangle(DrawMode::fill(), border, color);
 
@@ -168,16 +181,20 @@ impl Tetris {
     }
 
     fn update_score(&mut self, lines_count: i32) {
+        let mut multiplier = 1.0;
+        if self.configuration.classic_mode() {
+            multiplier = 2.0 + (BOARD_HEIGHT / SQUARE_SIZE - self.configuration.viewing_area_rows_count() as f32) / 10.0;
+        }
         match lines_count {
-            1 => self.score += SINGLE_LINE_POINTS,
-            2 => self.score += DOUBLE_LINE_POINTS,
-            3 => self.score += TRIPLE_LINE_POINTS,
-            4 => self.score += TETRIS_POINTS,
+            1 => self.score += (SINGLE_LINE_POINTS as f32 * multiplier).round() as i32,
+            2 => self.score += (DOUBLE_LINE_POINTS as f32 * multiplier).round() as i32,
+            3 => self.score += (TRIPLE_LINE_POINTS as f32 * multiplier).round() as i32,
+            4 => self.score += (TETRIS_POINTS as f32 * multiplier).round() as i32,
             _ => () //Do nothing
         }
     }
 
-    fn draw_text(&mut self, ctx: &mut Context, text: String, dest: Point2<f32>) -> GameResult<()> {
+    fn draw_text(&self, ctx: &mut Context, text: String, dest: Point2<f32>) -> GameResult<()> {
         let mut text_fragment = TextFragment::new(text);
         text_fragment.color = Some(graphics::WHITE);
         text_fragment.scale = Some(Scale { x: 20.0, y: 24.0 });
@@ -200,7 +217,7 @@ impl Tetris {
             self.explode_bomb();
 
             self.current_block = self.next_block.clone();
-            self.next_block = Block::new(rand::random());
+            self.next_block = Block::new(rand::random(), self.configuration.clone());
         }
     }
 
@@ -222,7 +239,7 @@ impl Tetris {
     }
 
     fn update_viewing_area(&mut self) {
-        if (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT + self.input.viewing_area_movement) as f32 > BOARD_HEIGHT / SQUARE_SIZE ||
+        if (self.viewing_area_start_row + self.configuration.viewing_area_rows_count() + self.input.viewing_area_movement) as f32 > BOARD_HEIGHT / SQUARE_SIZE ||
             self.viewing_area_start_row + self.input.viewing_area_movement < 0 {
                 return;
         }  
@@ -269,25 +286,25 @@ impl EventHandler for Tetris {
 
                 self.update_score(lines_count);
 
-                if self.lines > LINES_TO_LEVEL_UP {
+                if self.lines > self.configuration.lines_to_level_up() {
                     self.level += 1;
                     self.lines = 0;
-                    self.speed = DEFAULT_SPEED * self.level as f32;
+                    self.speed = self.configuration.default_speed() * self.level as f32;
                 }
 
                 let mut rng = thread_rng();
-                if rng.gen_range(0..4) == 1 {
+                if rng.gen_range(0..4) == 1 && !self.configuration.classic_mode() {
                     self.bomb = Some(Bomb::new(ctx).unwrap());
                 }
                 else {
                     self.current_block = self.next_block.clone();
-                    self.next_block = Block::new(rand::random());
+                    self.next_block = Block::new(rand::random(), self.configuration.clone());
                 }
                 return Ok(());
             }
         }
 
-        if self.ticks >= ROTATION_INTERVAL {
+        if self.ticks >= Tetris::ROTATION_INTERVAL {
             if self.input.rotate {
                 let old_positions = self.current_block.positions.clone();
                 
@@ -299,7 +316,7 @@ impl EventHandler for Tetris {
 
             self.update_viewing_area();
 
-            if self.ticks > MOVE_INTERVAL {
+            if self.ticks > Tetris::MOVE_INTERVAL {
                 self.translate_current_block(self.input.movement, 0.0);
                 
                 if let Some(bomb) = &mut self.bomb {
@@ -328,19 +345,21 @@ impl EventHandler for Tetris {
             return Ok(())
         }
 
-        for square in self.squares.iter_mut() {
-            if square.row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && square.row >= self.viewing_area_start_row as f32 {
+        for square in self.squares.iter() {
+            if square.row < (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 &&
+               square.row >= self.viewing_area_start_row as f32 {
+
                 square.draw(ctx).unwrap();
             } 
         }
 
         // The borders of the viewing area
         self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + self.viewing_area_start_row as f32 * SQUARE_SIZE - 5.0, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
-        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 * SQUARE_SIZE, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
+        self.draw_border(ctx, Rect::new(0.0, ENTRY_POINT.0 + (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 * SQUARE_SIZE, 2.0 * SQUARE_SIZE + BOARD_WIDTH, 5.0), graphics::WHITE).unwrap();
 
         if let Some(bomb) = &mut self.bomb {
             let row = (bomb.pos.y / SQUARE_SIZE).round() - 1.0;
-            if row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && row > self.viewing_area_start_row as f32 {
+            if row < (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 && row > self.viewing_area_start_row as f32 {
                 bomb.draw(ctx).unwrap();
             }
         }
@@ -348,7 +367,7 @@ impl EventHandler for Tetris {
             self.current_block.draw(ctx, self.viewing_area_start_row).unwrap();
 
             // for square in self.current_block.to_squares().iter_mut() {
-            //     if square.row < (self.viewing_area_start_row + VIEWING_AREA_ROWS_COUNT) as f32 && square.row >= self.viewing_area_start_row as f32 {
+            //     if square.row < (self.viewing_area_start_row + self.configuration.viewing_area_rows_count()) as f32 && square.row >= self.viewing_area_start_row as f32 {
             //         square.draw(ctx).unwrap();
             //     } 
             // }

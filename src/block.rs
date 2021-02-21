@@ -1,4 +1,5 @@
 use crate::constants::*;
+use crate::configuration::*;
 
 use std::mem;
 use ggez::graphics::{self, Rect, Color, MeshBuilder, DrawMode, DrawParam};
@@ -12,7 +13,7 @@ use rand::{
     thread_rng
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BlockType {
     I,
     J,
@@ -59,7 +60,7 @@ impl Square {
         }
     }
 
-    pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
+    pub fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         let mut mesh = MeshBuilder::new();
         mesh.rectangle(DrawMode::fill(), self.component, self.color);
 
@@ -80,12 +81,17 @@ impl Square {
 pub struct Block {
     pub positions: Vec<(f32, f32)>,
     pub translate: (f32, f32),
+    configuration: Configuration,
     block_type: BlockType,
     color: Color
 }
 
 impl Block {
-    pub fn new(block_type: BlockType) -> Self {
+    pub fn new(block_type: BlockType, configuration: Configuration) -> Self {
+        if configuration.classic_mode() && (block_type == BlockType::BigZ || block_type == BlockType::Plus) {
+            return Block::new(rand::random(), configuration);
+        }
+
         let positions: Vec<(f32, f32)>;
         match block_type {
             BlockType::I => positions = vec!((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)),
@@ -105,8 +111,8 @@ impl Block {
         Block {
             block_type,
             positions,
+            configuration,
             color: random_color,
-            //speed: 0.0,
             translate: (0.0, 0.0)
         }
     }
@@ -116,10 +122,13 @@ impl Block {
         self.translate.1 += y;
     }
 
-    pub fn draw(&mut self, ctx: &mut Context, viewing_area_row: i32) -> GameResult<()> {
+    pub fn draw(&self, ctx: &mut Context, viewing_area_row: i32) -> GameResult<()> {
         for pos in self.positions.iter() {
             let row = (pos.1 + self.translate.1).round();
-            if row < (viewing_area_row + VIEWING_AREA_ROWS_COUNT) as f32 && row >= viewing_area_row as f32 {
+
+            if row < (viewing_area_row + self.configuration.viewing_area_rows_count()) as f32 &&
+               row >= viewing_area_row as f32 {
+
                 let mut mesh = MeshBuilder::new();
                 mesh.rectangle(DrawMode::fill(), Square::new(0.0, 0.0, self.color).component, self.color);
                 
@@ -137,7 +146,7 @@ impl Block {
         Ok(())
     }
 
-    pub fn to_squares(&mut self) -> Vec<Square> {
+    pub fn to_squares(&self) -> Vec<Square> {
         let mut squares: Vec<Square> = Vec::new();
         for pos in self.positions.iter() {
             let row = (pos.1 + self.translate.1).round();
@@ -156,8 +165,15 @@ impl Block {
                 for pos in self.positions.iter_mut() {
                     mem::swap(&mut pos.0, &mut pos.1);
                 }
+
+                if self.positions[1].0 == 0.0 {
+                    self.translate(1.0, -1.0);
+                } 
+                else {
+                    self.translate(0.0, 1.0);
+                }
             },
-            _ => ()//Do nothing
+            _ => () //Do nothing
         }
 
         let mut move_left: f32 = 0.0;
@@ -191,7 +207,7 @@ impl Block {
         self.positions = new_positions;
     }
 
-    fn should_stop(&mut self, squares: &Vec<Square>) -> bool {
+    fn should_stop(&self, squares: &Vec<Square>) -> bool {
         for pos in self.positions.iter() {
             for square in squares.iter() {
                 if (pos.1 + self.translate.1 + 1.0) >= square.row &&
@@ -209,7 +225,7 @@ impl Block {
         return false;
     }
 
-    pub fn will_collide(&mut self, squares: &Vec<Square>, movement: f32) -> bool {
+    pub fn will_collide(&self, squares: &Vec<Square>, movement: f32) -> bool {
         for pos in self.positions.iter() {
             let square_column = (pos.0 + self.translate.0 + movement).round();
             let square_row = (pos.1 + self.translate.1).round();

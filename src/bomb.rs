@@ -29,7 +29,7 @@ impl Bomb {
         })
     }
 
-    pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
+    pub fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         graphics::draw(ctx, &self.image, DrawParam {
             dest: self.pos,
             .. Default::default()
@@ -43,7 +43,7 @@ impl Bomb {
         self.pos.y += speed;
     }
 
-    fn should_stop(&mut self, squares: &Vec<Square>) -> bool {
+    fn should_stop(&self, squares: &Vec<Square>) -> bool {
         for square in squares.iter() {
             if self.pos.y + self.image.height() as f32 >= (square.row + 1.0) * SQUARE_SIZE &&
                self.pos.y <= square.row * SQUARE_SIZE &&
@@ -60,7 +60,7 @@ impl Bomb {
         return false;
     }
 
-    pub fn will_collide(&mut self, squares: &Vec<Square>, movement: f32, speed: f32) -> bool {
+    pub fn will_collide(&self, squares: &Vec<Square>, movement: f32, speed: f32) -> bool {
         let square_column = ((self.pos.x + movement) / SQUARE_SIZE).round() - 1.0;
         let square_row = ((self.pos.y) / SQUARE_SIZE + speed).round() - 1.0;
         if let Some(_) = squares.iter().find(|s| s.column == square_column && s.row == square_row) {
